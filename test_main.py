@@ -1,64 +1,76 @@
-import pytest
+import csv
 from io import StringIO
 from types import SimpleNamespace
-from main import process_csv, convert_value
 
-csv_data = """name,rating,qty
-Mouse,4,10
-Monitor,5,7
-Notebook,3,15
-"""
+import pytest
 
-def test_filter_rating_gt_4(capsys):
+from exceptions import InvalidFilterSyntax, InvalidAggregationSyntax, NonNumericAggregationError
+from utils import convert_value
+from main import process_csv
+
+
+
+def prepare_file(csv_data):
     f = StringIO(csv_data)
-    args = SimpleNamespace(where="rating>4", aggregate=None)
-    process_csv(f, args)
+    reader = csv.reader(f)
+    return list(reader)
+
+@pytest.mark.parametrize('where, expected_names, not_expected_names', [
+    ('rating>4', ['Monitor'], ['Mouse', 'Notebook']),
+    ('qty=10', ['Mouse'], ['Monitor', 'Notebook']),
+    ('rating<4', ['Notebook'], ['Mouse', 'Monitor'])
+])
+def test_filter_rating_gt_4(sample_csv, where,expected_names, not_expected_names, capsys):
+    data = prepare_file(sample_csv)
+    args = SimpleNamespace(where=where, aggregate=None)
+    process_csv(data, args)
     captured = capsys.readouterr()
-    assert "Monitor" in captured.out
-    assert "Mouse" not in captured.out
+    for name in expected_names:
+        assert name in captured.out
+    for name in not_expected_names:
+        assert name not in captured.out
 
-def test_filter_qty_eq_7(capsys):
-    f = StringIO(csv_data)
-    args = SimpleNamespace(where="rating>4", aggregate=None)
-    process_csv(f, args)
+
+@pytest.mark.parametrize('aggregate, value', [
+    ('rating=min', '3'),
+    ('qty=avg', '11'),
+])
+def test_aggregate_min_rating(sample_csv, aggregate, value, capsys):
+    data = prepare_file(sample_csv)
+    args = SimpleNamespace(where=None, aggregate=aggregate)
+    process_csv(data, args)
     captured = capsys.readouterr()
-    assert "Monitor" in captured.out
-    assert "Mouse" not in captured.out
-    assert "Notebook" not in captured.out
+    assert value in captured.out
 
-def test_aggregate_min_rating(capsys):
-    f = StringIO(csv_data)
-    args = SimpleNamespace(where=None, aggregate="rating=min")
-    process_csv(f, args)
-    captured = capsys.readouterr()
-    assert "3" in captured.out
 
-def test_invalid_filter():
-    f = StringIO(csv_data)
-    args = SimpleNamespace(where="rating>>4", aggregate=None)
-    with pytest.raises(SyntaxError):
-        process_csv(f, args)
+def test_invalid_filter(sample_csv):
+    data = prepare_file(sample_csv)
+    args = SimpleNamespace(where='rating>>4', aggregate=None)
+    with pytest.raises(InvalidFilterSyntax):
+        process_csv(data, args)
 
-def test_invalid_aggregate():
-    f = StringIO(csv_data)
+
+def test_invalid_aggregate(sample_csv):
+    data = prepare_file(sample_csv)
     args = SimpleNamespace(where=None, aggregate='rating!=avg')
-    with pytest.raises(SyntaxError):
-        process_csv(f, args)
+    with pytest.raises(InvalidAggregationSyntax):
+        process_csv(data, args)
 
 
-def test_non_numeric_aggregate_fails():
-    f = StringIO(csv_data)
+def test_non_numeric_aggregate_fails(sample_csv):
+    data = prepare_file(sample_csv)
     args = SimpleNamespace(where=None, aggregate='name=avg')
-    with pytest.raises(ValueError):
-        process_csv(f, args)
+    with pytest.raises(NonNumericAggregationError):
+        process_csv(data, args)
+
 
 def test_convert_value_float():
     f = '2.58'
     converted = convert_value(f)
     assert isinstance(converted, float)
 
+
 def test_convert_value_string():
     f = 'apple'
     converted = convert_value(f)
     assert isinstance(converted, str)
-
